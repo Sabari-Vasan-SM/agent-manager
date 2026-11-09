@@ -14,6 +14,19 @@ const STATUS = {
 };
 const status = (s) => (STATUS[s] || ((x) => x))(s.replace('_', ' '));
 
+const PROVIDER_COLORS = {
+  'claude-code': (s) => c.cyan(s),
+  antigravity: (s) => c.magenta(s),
+  codex: (s) => c.green(s),
+  cursor: (s) => c.blue(s),
+  windsurf: (s) => c.yellow(s),
+  aider: (s) => c.bold(s),
+};
+function providerBadge(p) {
+  const fn = PROVIDER_COLORS[p] || c.gray;
+  return fn(p || 'ai');
+}
+
 // eslint-disable-next-line no-control-regex
 const visible = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '');
 const width = (s) => [...visible(s)].length;
@@ -48,8 +61,9 @@ function cols() { return process.stdout.columns || 120; }
 
 function summaryLine(s) {
   const m = s.summary;
+  const provs = m.providers && m.providers > 1 ? c.gray(` (${m.providers} AI tools)`) : '';
   return [
-    c.bold(`${m.total} agents`) + c.gray(` (${m.main} sessions, ${m.subagents} subagents)`),
+    c.bold(`${m.total} agents`) + c.gray(` (${m.main} sessions, ${m.subagents} subagents)`) + provs,
     c.green(`${m.running} running`), c.yellow(`${m.idle} idle`), c.blue(`${m.completed} completed`), c.red(`${m.failed} failed`),
     `tasks ${m.tasks.completed}/${m.tasks.pending + m.tasks.in_progress + m.tasks.completed + m.tasks.failed}`,
     `${m.modifiedFiles} files changed`, `${m.artifacts} artifacts`,
@@ -65,16 +79,17 @@ function agentTree(s, { all = false } = {}) {
   const ended = (a) => a.status === 'completed' || a.status === 'failed';
   const flat = (a) => [a, ...(kids[a.id] || []).flatMap(flat)];
   if (!all) roots = roots.filter((r) => flat(r).some((a) => !ended(a)));
-  const W = Math.max(20, Math.min(46, cols() - 90));
+  const W = Math.max(20, Math.min(46, cols() - 100));
   const rows = [];
   const walk = (a, depth, last) => {
     const prefix = depth ? c.gray('  '.repeat(depth - 1) + (last ? '└─ ' : '├─ ')) : '';
     const p = a.progress.total ? `${bar(a.progress.done, a.progress.total, 8)} ${a.progress.done}/${a.progress.total}` : '';
     rows.push([
       prefix + trunc(a.name, W - depth * 2),
+      providerBadge(a.provider),
       a.kind === 'main' ? c.gray('session') : c.magenta(trunc(a.agentType, 16)),
       status(a.status),
-      trunc(a.activity, Math.max(20, cols() - W - 70)),
+      trunc(a.activity, Math.max(20, cols() - W - 80)),
       p,
       String(a.files.length),
       ago(a.lastActivity),
@@ -84,7 +99,7 @@ function agentTree(s, { all = false } = {}) {
   };
   roots.forEach((r) => walk(r, 0, true));
   if (!rows.length) return c.gray(all ? 'No agents found for this project.' : 'No active agents. Use --all to show ended sessions.');
-  return table(['AGENT', 'TYPE', 'STATUS', 'CURRENT TASK', 'PROGRESS', 'FILES', 'LAST'], rows);
+  return table(['AGENT', 'TOOL', 'TYPE', 'STATUS', 'CURRENT TASK', 'PROGRESS', 'FILES', 'LAST'], rows);
 }
 
 function tasksView(s, { all = false } = {}) {
@@ -110,8 +125,8 @@ function filesView(s) {
 
 function artifactsView(list, limit = 25) {
   if (!list.length) return c.gray('No artifacts yet. They appear when an agent finishes a task.');
-  return table(['ID', 'STATUS', 'AGENT', 'TASK', 'FILES', 'ISSUES', 'TIME', 'ENDED'], list.slice(0, limit).map((a) => [
-    c.cyan(a.id), status(a.status), trunc(a.agentName, 28), trunc(a.prompt, Math.max(24, cols() - 110)),
+  return table(['ID', 'STATUS', 'TOOL', 'AGENT', 'TASK', 'FILES', 'ISSUES', 'TIME', 'ENDED'], list.slice(0, limit).map((a) => [
+    c.cyan(a.id), status(a.status), providerBadge(a.provider), trunc(a.agentName, 24), trunc(a.prompt, Math.max(24, cols() - 120)),
     String(a.filesModified), a.issues ? c.red(String(a.issues)) : '0', fmtDuration(a.durationMs), ago(a.endedAt),
   ]));
 }
@@ -119,13 +134,16 @@ function artifactsView(list, limit = 25) {
 function activityView(s, limit = 15) {
   return s.activity.slice(0, limit).map((e) => {
     const t = new Date(e.ts).toLocaleTimeString();
-    return `${c.gray(t)}  ${pad(c.bold(trunc(e.agentName, 28)), 28)}  ${e.error ? c.red(e.text) : e.text}`;
+    const prov = e.provider ? c.gray(`[${e.provider}] `) : '';
+    return `${c.gray(t)}  ${prov}${pad(c.bold(trunc(e.agentName, 24)), 24)}  ${e.error ? c.red(e.text) : e.text}`;
   }).join('\n') || c.gray('No activity yet.');
 }
 
 function dashboardText(s, opts = {}) {
-  const head = `${c.bold(c.cyan('AI Manager'))} ${c.gray('·')} ${c.bold(s.project.name)} ${c.gray(s.project.dir)}  ${c.gray(new Date(s.generatedAt).toLocaleTimeString())}`;
+  const provNames = (s.providers || []).map((p) => p.name).join(', ');
+  const provLabel = provNames ? c.gray(` · Tools: ${provNames}`) : '';
+  const head = `${c.bold(c.cyan('AI Manager'))} ${c.gray('·')} ${c.bold(s.project.name)} ${c.gray(s.project.dir)}${provLabel}  ${c.gray(new Date(s.generatedAt).toLocaleTimeString())}`;
   return [head, summaryLine(s), '', agentTree(s, opts), '', c.bold('Recent activity'), activityView(s, opts.activity || 8)].join('\n');
 }
 
-module.exports = { c, status, table, agentTree, tasksView, filesView, artifactsView, activityView, dashboardText, summaryLine, trunc };
+module.exports = { c, status, table, agentTree, tasksView, filesView, artifactsView, activityView, dashboardText, summaryLine, trunc, providerBadge };

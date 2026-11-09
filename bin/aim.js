@@ -10,14 +10,14 @@ const tui = require('../src/tui');
 const { c } = tui;
 const pkg = require('../package.json');
 
-const HELP = `${c.bold('AI Manager')} ${c.gray('v' + pkg.version)} — monitor Claude Code agents and subagents in a project
+const HELP = `${c.bold('AI Manager')} ${c.gray('v' + pkg.version)} — monitor AI coding agents across multiple tools (Claude Code, Antigravity, Codex, Cursor, Windsurf, Aider)
 
 ${c.bold('Usage')}  aim <command> [options]
 
 ${c.bold('Monitor')}
   status                 Summary and agent tree (default command)
   watch                  Live terminal view, refreshes every second
-  agents                 Agents and subagents with status and current task
+  agents                 Agents and subagents with status, tool and current task
   tasks                  Tasks: pending, in progress, completed, failed
   files                  Files that agents read, edit or write
   activity               Recent tool calls across all agents
@@ -34,15 +34,16 @@ ${c.bold('Dashboard')}
     --share              Also open a public URL through a tunnel (cloudflared or ssh)
     --token <t>          Access token (made for you with --lan or --share)
     --open               Open the dashboard in the browser
-  demo                   Dashboard with simulated agents (no Claude Code needed)
+  demo                   Dashboard with simulated agents (no AI tools needed)
 
-${c.bold('Hooks')} ${c.gray('(optional: instant artifacts and exact session end / permission waits)')}
+${c.bold('Hooks')} ${c.gray('(optional Claude Code hooks for instant artifacts and permission waits)')}
   hooks install          Add AI Manager hooks to .claude/settings.local.json
   hooks uninstall        Remove them
   hooks status           Show hook state and the last event
 
 ${c.bold('Common options')}
-  --project <dir>        Project root (default: nearest folder with .claude/.git)
+  --project <dir>        Project root (default: nearest folder with .git/.claude/.gemini/.codex)
+  --provider <tools>     Filter AI tools (e.g. claude, antigravity, codex, cursor, windsurf, aider)
   --all                  Include ended sessions and full history
   --max-age <hours>      Ignore agents idle for longer than this (default 48, 0 = no limit)
   --json                 Machine-readable output
@@ -56,7 +57,7 @@ function parseArgs(argv) {
       const [k, v] = a.slice(2).split('=');
       const next = argv[i + 1];
       if (v !== undefined) out[k] = v;
-      else if (next !== undefined && !next.startsWith('--') && ['project', 'port', 'token', 'max-age', 'limit', 'interval', 'host', 'tunnel', 'speed'].includes(k)) { out[k] = next; i++; }
+      else if (next !== undefined && !next.startsWith('--') && ['project', 'provider', 'port', 'token', 'max-age', 'limit', 'interval', 'host', 'tunnel', 'speed'].includes(k)) { out[k] = next; i++; }
       else out[k] = true;
     } else out._.push(a);
   }
@@ -66,7 +67,8 @@ function parseArgs(argv) {
 function makeMonitor(args, extra = {}) {
   const projectDir = args.project ? path.resolve(args.project) : findProjectRoot();
   const maxAgeHours = args['max-age'] != null ? Number(args['max-age']) : args.all ? 0 : 48;
-  const m = new Monitor({ projectDir, maxAgeHours, ...extra });
+  const providers = args.provider || extra.providers;
+  const m = new Monitor({ projectDir, maxAgeHours, providers, ...extra });
   m.refresh();
   return m;
 }

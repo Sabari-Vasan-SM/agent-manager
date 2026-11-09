@@ -1,7 +1,7 @@
 {
-  "name": "claude-ai-manager",
-  "version": "1.0.0",
-  "description": "CLI and live web dashboard to monitor Claude Code agents and subagents in a project: status, tasks, files and work artifacts.",
+  "name": "ai-manager",
+  "version": "1.1.0",
+  "description": "CLI and live web dashboard to monitor AI coding agents and subagents in a project across multiple tools: Claude Code, Antigravity, Codex CLI, Cursor, Windsurf, and Aider.",
   "license": "MIT",
   "bin": {
     "aim": "bin/aim.js",
@@ -22,11 +22,17 @@
     "node": ">=18"
   },
   "keywords": [
-    "claude",
-    "claude-code",
+    "ai",
     "agents",
     "monitoring",
     "dashboard",
-    "cli"
+    "cli",
+    "claude",
+    "claude-code",
+    "antigravity",
+    "codex",
+    "cursor",
+    "windsurf",
+    "aider"
   ]
 }

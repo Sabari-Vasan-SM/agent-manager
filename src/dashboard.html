@@ -229,7 +229,7 @@ function renderKpis() {
   const tt = m.tasks.pending + m.tasks.in_progress + m.tasks.completed + m.tasks.failed;
   const pct = tt ? Math.round((m.tasks.completed / tt) * 100) : 0;
   $('#kpis').innerHTML = `
-    <div class="kpi"><div class="k">Agents</div><div class="v">${m.total}</div><div class="s">${m.main} sessions · ${m.subagents} subagents</div></div>
+    <div class="kpi"><div class="k">Agents</div><div class="v">${m.total}</div><div class="s">${m.main} sessions · ${m.subagents} subagents${m.providers > 1 ? ` · ${m.providers} AI tools` : ''}</div></div>
     <div class="kpi run"><div class="k">Running</div><div class="v">${m.running}</div><div class="s">working now</div></div>
     <div class="kpi idle"><div class="k">Idle</div><div class="v">${m.idle}</div><div class="s">waiting or stalled</div></div>
     <div class="kpi done"><div class="k">Completed</div><div class="v">${m.completed}</div><div class="s">finished</div></div>
@@ -258,7 +258,7 @@ function agentRow(a) {
   const p = a.progress;
   const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
   return `<div class="agent" data-agent="${esc(a.id)}">
-    <div class="top">${pill(a.status)}<span class="name" title="${esc(a.name)}">${esc(a.name)}</span><span class="badge">${esc(a.kind === 'main' ? 'session' : a.agentType)}</span></div>
+    <div class="top">${pill(a.status)}<span class="name" title="${esc(a.name)}">${esc(a.name)}</span><span class="badge" style="border-color:var(--accent);color:var(--text)">${esc(a.providerName || a.provider || 'AI')}</span><span class="badge">${esc(a.kind === 'main' ? 'session' : a.agentType)}</span></div>
     <div class="meta"><span title="Duration">⏱ ${dur(elapsed)}</span><span title="Tool calls">⚙ ${a.toolCalls}</span><span title="Files touched">📄 ${a.files.length}</span>${a.errors.length ? `<span style="color:var(--fail)" title="Issues">⚠ ${a.errors.length}</span>` : ''}<span title="Last activity">${ago(a.lastActivity)}</span></div>
     <div class="act">${a.status === 'running' ? '▸ ' : ''}${esc(a.activity)}</div>
     ${p.total ? `<div class="prog"><span>Tasks ${p.done}/${p.total}</span><div class="meter"><b style="width:${pct}%"></b></div><span>${pct}%</span></div>` : ''}
@@ -308,7 +308,7 @@ function renderAgents() {
     const hidden = roots.length - groups.length;
     html = S.agents.length
       ? `<div class="empty"><b>No active agents match</b>${hidden > 0 && !ui.showEnded ? `${hidden} ended session(s) are hidden. Turn on “Show ended sessions” to see them.` : 'Change the filter to see more.'}</div>`
-      : `<div class="empty"><b>No agents found yet</b>Start Claude Code in <code>${esc(S.project.dir)}</code>. Agents show here in real time.</div>`;
+      : `<div class="empty"><b>No agents found yet</b>Start an AI coding agent (Claude Code, Antigravity, Codex, Cursor, Windsurf, Aider) in <code>${esc(S.project.dir)}</code>. Agents show here in real time.</div>`;
   }
   $('#view').innerHTML = tb + html;
   $('#search').addEventListener('input', (e) => { ui.search = e.target.value; const pos = e.target.selectionStart; renderAgents(); const s = $('#search'); s.focus(); s.setSelectionRange(pos, pos); });
@@ -385,6 +385,7 @@ function renderDrawer() {
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px">${pill(a.status)}<span class="badge">${esc(a.kind === 'main' ? 'main session' : a.agentType)}</span><span style="color:var(--muted);font-size:13px">${esc(a.activity)}</span></div>
     <div class="kv">
       <div>Agent ID</div><div class="mono">${esc(a.id)}</div>
+      <div>AI Tool</div><div><span class="badge" style="border-color:var(--accent);color:var(--text)">${esc(a.providerName || a.provider || 'AI')}</span></div>
       ${parent ? `<div>Parent</div><div><a href="#" data-agent="${esc(parent.id)}">${esc(parent.name)}</a></div>` : ''}
       <div>Started</div><div>${when(a.startedAt)}</div>
       <div>Last activity</div><div>${ago(a.lastActivity)}</div>

@@ -22,12 +22,13 @@ function transcriptDirs(projectDir, cdir = claudeDir()) {
   return names.filter((n) => n.toLowerCase() === want).map((n) => path.join(base, n));
 }
 
-/** Walk up from `start` to the nearest folder that looks like a project root. */
+/** Walk up from `start` to the nearest folder that looks like a project root across supported AI tools. */
 function findProjectRoot(start = process.cwd()) {
+  if (process.env.AIM_PROJECT_DIR) return path.resolve(process.env.AIM_PROJECT_DIR);
   if (process.env.CLAUDE_PROJECT_DIR) return path.resolve(process.env.CLAUDE_PROJECT_DIR);
   let dir = path.resolve(start);
   for (;;) {
-    for (const marker of ['.ai-manager', '.claude', '.git']) {
+    for (const marker of ['.ai-manager', '.claude', '.git', '.gemini', '.codex', '.cursor', '.windsurf', '.aider.chat.history.md']) {
       if (fs.existsSync(path.join(dir, marker))) return dir;
     }
     const up = path.dirname(dir);

@@ -1,138 +1,116 @@
-# AI Manager for Claude Code
+# AI Manager
 
-AI Manager is a CLI and a live web dashboard. It shows what every Claude Code agent and subagent in a project does:
+AI Manager (`aim`) is a zero-dependency CLI and live web dashboard to monitor AI coding agents and subagents across multiple tools in real time:
 
-- **Agent monitoring**: the number of sessions and subagents, and the name, type, status (`running`, `idle`, `completed`, `failed`) and current task of each. It also shows the files each agent reads, edits and writes.
-- **Task tracking**: task lists from `TodoWrite`, `TaskCreate`/`TaskUpdate` and the desktop app's plan, plus each delegated subagent as a task. Each task is `pending`, `in progress`, `completed` or `failed`.
-- **Artifacts**: when an agent finishes a turn, AI Manager writes a report (JSON and Markdown). The report has a summary, the modified files, the files read, the tasks, the subagents, the tool usage and the issues. All reports stay in a history.
-- **Web dashboard**: live updates (Server-Sent Events), and local, LAN or public URLs.
+- **Supported AI Tools**: **Claude Code**, **Antigravity (AGY)**, **OpenAI Codex CLI**, **Cursor**, **Windsurf (Cascade)**, and **Aider**.
+- **Multi-Tool Monitoring**: Automatically detects active agents from multiple AI tools working on the same project simultaneously.
+- **Agent & Subagent Trees**: Shows sessions, subagent hierarchies, tool badges, status (`running`, `idle`, `completed`, `failed`), durations, and active activities.
+- **Task Tracking**: Tracks task lists across tools (`TodoWrite`, `TaskCreate`, `update_plan`, desktop plans) and subagent delegations. Grouped into Pending, In progress, Completed, and Failed.
+- **File Touch Analysis**: Records every file read, edited, and written across all agents with modification counts.
+- **Turn Artifacts**: Automatically writes detailed work summaries (JSON and Markdown) upon turn completion.
+- **Live Web Dashboard & TUI**: Real-time SSE streaming web UI (with dark/light themes and filtering) and full terminal UI.
 
-It has no dependencies. It needs Node.js 18 or later.
+Requires Node.js 18 or later. Zero external npm dependencies.
 
 ## Install
 
 ```bash
-cd "D:\agent manager"
+git clone https://github.com/your-org/ai-manager.git
+cd ai-manager
 npm link
 ```
 
-`npm link` makes the `aim` and `ai-manager` commands available everywhere. You can also run `node "D:\agent manager\bin\aim.js" <command>`.
+`npm link` provides the `aim` and `ai-manager` commands globally. You can also run `node bin/aim.js <command>`.
 
-## Quick start
+## Quick Start
 
-1. Go to a project folder where you use Claude Code.
-2. Run the dashboard:
+1. Go to any project where you use an AI coding tool:
+```bash
+cd /path/to/my-project
+```
 
+2. Start the live dashboard:
 ```bash
 aim dashboard --open
 ```
 
-3. To try it without real agents, run the demo. It simulates a session with 3 parallel subagents, and one of them fails:
+3. Or inspect from the terminal:
+```bash
+aim status
+aim watch
+```
 
+4. To try it immediately with simulated agents:
 ```bash
 aim demo --open
 ```
 
-## How it works
+## Supported AI Tools & Transcript Sources
 
-AI Manager reads the transcripts that Claude Code writes for each project:
+AI Manager incrementally parses local transcripts using byte offsets with millisecond refreshes:
 
-```
-~/.claude/projects/<encoded project path>/<session>.jsonl
-~/.claude/projects/<encoded project path>/<session>/subagents/agent-<id>.jsonl  (+ .meta.json)
-```
+| Tool | Transcript Location | Subagents |
+|---|---|---|
+| **Claude Code** | `~/.claude/projects/<encoded-path>/<session>.jsonl` | Yes (`subagents/`) |
+| **Antigravity (AGY)** | `~/.gemini/antigravity/brain/<id>/.system_generated/logs/transcript.jsonl` | Yes (`subagents/`) |
+| **OpenAI Codex CLI** | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | Yes (linked threads) |
+| **Cursor** | `~/.cursor/projects/<encoded>/agent-transcripts/<id>/` | Yes (`subagents/`) |
+| **Windsurf (Cascade)** | `~/.windsurf/transcripts/<trajectory_id>.jsonl` | Single session |
+| **Aider** | `<project>/.aider.chat.history.md` | Single session |
 
-It reads each file incrementally (by byte offset), so a refresh takes a few milliseconds. No setup is necessary. Agents that ran before you installed AI Manager also show.
-
-Status rules:
+### Status States
 
 | Status | Meaning |
 |---|---|
-| `running` | The agent has an open turn and wrote to its transcript recently (3 min, or 10 min while a tool runs). |
-| `idle` | A main session waits for the user or for a permission, or an agent has no activity for some minutes. |
-| `completed` | A subagent finished, or a main session ended (hook `SessionEnd`, or 30 min with no activity). |
-| `failed` | The turn stopped with an API error, a failed subagent result, or a user interrupt. A subagent that stopped without a result is also `failed`. |
+| `running` | The agent has an active turn and recent activity (running tools or thinking). |
+| `idle` | Waiting for user input, permission confirmation, or inactive for a few minutes. |
+| `completed` | Subagent finished its delegation, or main session completed work. |
+| `failed` | Turn stopped due to API error, failed tool, or user interrupt. |
 
-### Optional hooks
-
-Hooks make two things more exact: artifacts are written the moment an agent stops (also when no dashboard runs), and the dashboard shows "waiting for permission" and the true session end.
-
-```bash
-aim hooks install     # writes .claude/settings.local.json in the project
-aim hooks status
-aim hooks uninstall   # removes only the AI Manager entries
-```
-
-Restart the Claude Code sessions in the project after you install the hooks. The hook command never prints and always exits with code 0, so it cannot block Claude Code.
-
-## Commands
+## CLI Commands
 
 | Command | What it does |
 |---|---|
-| `aim status` | Summary, agent tree and recent activity (default command) |
-| `aim watch` | Live terminal view |
-| `aim agents` | Agents and subagents as a tree |
-| `aim tasks` | All tasks with status and owner |
-| `aim files` | Files that agents touched, with read/edit/write counts |
-| `aim activity` | Recent tool calls of all agents |
-| `aim artifacts` | Artifact history |
-| `aim artifact <id>` | Print one artifact as Markdown (`--json` for JSON) |
-| `aim scan` | Read transcripts now and write missing artifacts (`--all` for full history) |
-| `aim dashboard` | Start the web dashboard |
-| `aim demo` | Dashboard with simulated agents |
-| `aim hooks install\|uninstall\|status` | Manage the optional hooks |
+| `aim status` | Summary, multi-tool agent tree, and recent activity (default) |
+| `aim watch` | Live terminal view, auto-refreshes every second |
+| `aim agents` | Detailed agent tree with tool badges, status, and current task |
+| `aim tasks` | All tasks with status and owner agent |
+| `aim files` | Files read, edited, and written across all agents |
+| `aim activity` | Recent tool calls across all AI tools |
+| `aim artifacts` | Work history reports |
+| `aim artifact <id>` | View one artifact report as Markdown (`--json` for JSON) |
+| `aim scan` | Parse transcripts now and write any missing artifacts |
+| `aim dashboard` | Start the real-time web dashboard |
+| `aim demo` | Launch dashboard with simulated parallel agents |
+| `aim hooks install\|uninstall\|status` | Manage optional Claude Code hooks |
 
-Common options: `--project <dir>`, `--all` (include ended sessions and full history), `--max-age <hours>` (default 48, `0` = no limit), `--json`.
+### Options
 
-## Dashboard and URLs
+- `--project <dir>`: Project directory (defaults to nearest `.git`, `.claude`, `.gemini`, or `.codex` folder)
+- `--provider <tools>`: Filter AI tools (e.g. `--provider claude,antigravity,codex`)
+- `--all`: Include ended sessions and full history
+- `--max-age <hours>`: Ignore agents idle longer than this (default: 48, `0` = no limit)
+- `--port <n>`: Web dashboard port (default: 4777)
+- `--lan`: Listen on all interfaces with access tokens
+- `--share`: Open a public HTTPS tunnel (via `cloudflared` or `ssh`)
+- `--json`: Output machine-readable JSON
+
+## Dashboard & Sharing
 
 ```bash
-aim dashboard                 # http://localhost:4777/  (this computer only)
-aim dashboard --lan           # also http://<lan-ip>:4777/?token=...
-aim dashboard --share         # also a public https URL, with a token
+aim dashboard                 # http://localhost:4777/ (local machine)
+aim dashboard --lan           # http://<lan-ip>:4777/?token=... (local network)
+aim dashboard --share         # https://*.trycloudflare.com/?token=... (public tunnel)
 aim dashboard --port 5000 --open
 ```
 
-The dashboard has 5 tabs:
+Dashboard views:
+- **Agents**: Tree view grouping subagents under sessions with AI tool badges, status pills, task checklists, and file chips. Click any row for deep drill-down drawer.
+- **Tasks**: Kanban board with Pending, In Progress, Completed, and Failed columns.
+- **Files**: Interactive table of all files touched with read/edit/write counts and responsible agents.
+- **Activity**: Unified real-time event feed across all tools.
+- **Artifacts**: Markdown reports for each finished turn with diffs, summaries, and tool usage metrics.
 
-- **Agents**: sessions with their subagents in a tree. Each row shows the status, current task, task progress, files, duration, tool calls and issues. Click a row for the details: the prompt, the result, the task checklist, the files, the tools, the issues, the recent activity and the artifacts.
-- **Tasks**: a board with the columns Pending, In progress, Completed and Failed.
-- **Files**: each touched file, the agents that touched it, and the read/edit/write counts.
-- **Activity**: a live feed of the tool calls of all agents.
-- **Artifacts**: the history of finished work. Click a row to read the report or to download it as `.md`.
+## License
 
-**Public URL.** `--share` uses `cloudflared` (`*.trycloudflare.com`) when it is installed. If not, it uses `ssh` to `localhost.run` (`*.lhr.life`). With `--lan` or `--share`, AI Manager makes a random token, and every URL needs it.
-
-> **Warning:** The dashboard shows prompts, file paths and agent output. Share the public URL only with people who may see that data. Stop the tunnel with Ctrl+C.
-
-## Artifacts
-
-Artifacts are in `<project>/.ai-manager/artifacts/`:
-
-- `<id>.json`: structured data
-- `<id>.md`: a readable report
-- `index.json`: the history index
-
-The artifact ID is `<agent id prefix>-t<turn>`. Add `.ai-manager/` to your `.gitignore`.
-
-Environment variables: `AIM_CLAUDE_DIR` (Claude config dir, default `~/.claude`), `AIM_STORE_DIR` (artifact and event store, default `<project>/.ai-manager`).
-
-## Tests
-
-```bash
-npm test
-```
-
-## Files
-
-```
-bin/aim.js          CLI
-src/monitor.js      transcript reader, agent model, status rules, snapshot
-src/artifacts.js    artifact store and Markdown reports
-src/hooks.js        hook install/uninstall and the hook handler
-src/server.js       HTTP server, SSE stream, token check
-src/dashboard.html  the dashboard page (no build step)
-src/share.js        public URL through cloudflared or ssh
-src/tui.js          terminal tables and views
-src/demo.js         simulated agent run
-```
+MIT

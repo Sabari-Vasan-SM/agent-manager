@@ -1,35 +1,36 @@
 'use strict';
 /**
- * Monitor: reads Claude Code transcripts for one project and builds a live model
- * of every agent (main sessions and subagents), their turns, tasks, files and errors.
- *
- * Sources, in order of trust:
- *   1. Transcripts  ~/.claude/projects/<encoded>/<session>.jsonl
- *                   ~/.claude/projects/<encoded>/<session>/subagents/agent-<id>.jsonl (+ .meta.json)
- *   2. Hook events  <project>/.ai-manager/hooks.jsonl (optional, written by `aim hook`)
+ * Monitor: reads AI agent transcripts for a project across multiple providers
+ * (Claude Code, Antigravity, OpenAI Codex CLI, Cursor, Windsurf, Aider)
+ * and builds a live model of every agent (main sessions and subagents),
+ * their turns, tasks, files and errors.
  *
  * Reading is incremental: each file keeps a byte offset, so refresh() is cheap.
  */
 const fs = require('fs');
 const path = require('path');
-const { claudeDir, transcriptDirs, storeDir } = require('./paths');
+const { claudeDir, storeDir } = require('./paths');
 const { ArtifactStore } = require('./artifacts');
+const {
+  CANONICAL_TOOLS,
+  FILE_TOOLS,
+  SPAWN_TOOLS,
+  describeTool,
+  clip,
+} = require('./providers/base');
+const { resolveProviders } = require('./providers/registry');
 
 const STALE_TOOL_MS = 10 * 60e3;   // a tool call with no result for this long = stalled
 const STALE_THINK_MS = 3 * 60e3;   // no new line while the model "thinks" for this long = stalled
 const SESSION_END_MS = 30 * 60e3;  // an idle main session with no activity for this long = completed
 const RECENT_LIMIT = 40;
 
-const FILE_TOOLS = {
-  Read: 'read', NotebookRead: 'read', Edit: 'edit', MultiEdit: 'edit', NotebookEdit: 'edit', Write: 'write',
-};
-const SPAWN_TOOLS = new Set(['Agent', 'Task']);
-
-function newAgent(id, kind, sessionId) {
+function newAgent(id, kind, sessionId, provider = 'claude-code', providerName = 'Claude Code') {
   return {
     id, kind, sessionId,
     parentId: kind === 'main' ? null : sessionId,
     spawnToolUseId: null,
+    provider, providerName,
     name: '', agentType: kind === 'main' ? 'main' : 'subagent', description: '',
     model: null, startedAt: null, lastTs: null,
     turns: [], pending: new Map(), tasks: [], taskSeq: 0,
@@ -51,33 +52,10 @@ function textOf(content) {
   return content.filter((c) => c && c.type === 'text').map((c) => c.text).join('\n');
 }
 
-function clip(s, n) {
-  s = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
-  return s.length > n ? s.slice(0, n - 1) + '…' : s;
-}
-
-/** Describe a tool call as a short human activity line. */
-function describeTool(name, input = {}, rel = (p) => p) {
-  const f = input.file_path || input.notebook_path || input.path;
-  switch (name) {
-    case 'Read': return `Reading ${rel(f)}`;
-    case 'Edit': case 'MultiEdit': case 'NotebookEdit': return `Editing ${rel(f)}`;
-    case 'Write': return `Writing ${rel(f)}`;
-    case 'Bash': case 'PowerShell': return `Running: ${clip(input.description || input.command, 70)}`;
-    case 'Grep': return `Searching for "${clip(input.pattern, 40)}"`;
-    case 'Glob': return `Finding files ${clip(input.pattern, 40)}`;
-    case 'Agent': case 'Task': return `Delegating: ${clip(input.description, 60)}`;
-    case 'WebFetch': return `Fetching ${clip(input.url, 60)}`;
-    case 'WebSearch': return `Searching the web: ${clip(input.query, 50)}`;
-    case 'TodoWrite': case 'TaskCreate': case 'TaskUpdate': case 'mcp__ccd_turn__update_plan': return 'Updating the task list';
-    default: return `Using ${name.replace(/^mcp__.+?__/, '')}`;
-  }
-}
-
 function normStatus(s) {
-  if (s === 'completed' || s === 'done') return 'completed';
-  if (s === 'in_progress' || s === 'active') return 'in_progress';
-  if (s === 'failed' || s === 'cancelled' || s === 'deleted') return 'failed';
+  if (s === 'completed' || s === 'done' || s === 'complete') return 'completed';
+  if (s === 'in_progress' || s === 'active' || s === 'working') return 'in_progress';
+  if (s === 'failed' || s === 'cancelled' || s === 'deleted' || s === 'error') return 'failed';
   return 'pending';
 }
 
@@ -85,6 +63,7 @@ class Monitor {
   /**
    * @param {object} opts
    * @param {string} opts.projectDir   project root
+   * @param {string|Array} [opts.providers] provider name(s) or instances (default: auto-detected)
    * @param {string} [opts.claudeDir]  Claude config dir (default ~/.claude)
    * @param {string} [opts.storeDir]   where artifacts and hook events live (default <project>/.ai-manager)
    * @param {number} [opts.maxAgeHours] hide agents with no activity for longer than this (0 = all)
@@ -97,7 +76,13 @@ class Monitor {
     this.maxAgeHours = opts.maxAgeHours == null ? 48 : opts.maxAgeHours;
     this.writeArtifacts = opts.artifacts !== false;
     this.now = opts.now || (() => Date.now());
-    this.files = new Map();   // path -> { offset, partial, sessionId, agentId }
+
+    // Initialize AI Tool Providers
+    this.providers = resolveProviders(opts.providers, this.projectDir, { claudeDir: this.claudeDir });
+    this.providerMap = new Map(this.providers.map((p) => [p.name, p]));
+    this.defaultProvider = this.providers[0] || null;
+
+    this.files = new Map();   // path -> { offset, partial, sessionId, agentId, provider, isMarkdown }
     this.agents = new Map();  // agentId -> agent
     this.spawns = new Map();  // toolUseId -> { parentId, sessionId, description, subagentType, prompt, ts, result, childId }
     this.childSpawn = new Map(); // child agentId -> spawn
@@ -115,24 +100,15 @@ class Monitor {
 
   // ---------------------------------------------------------------- scanning
 
-  /** Find transcript files. With `onlySession`, only that session's files. */
+  /** Find transcript files across all active providers. With `onlySession`, only that session's files. */
   discover(onlySession) {
     const out = [];
-    for (const dir of transcriptDirs(this.projectDir, this.claudeDir)) {
-      let names = [];
-      try { names = fs.readdirSync(dir); } catch { continue; }
-      for (const n of names) {
-        if (!n.endsWith('.jsonl')) continue;
-        const sessionId = n.slice(0, -6);
-        if (onlySession && sessionId !== onlySession) continue;
-        out.push({ file: path.join(dir, n), sessionId, agentId: sessionId, kind: 'main' });
-        const subDir = path.join(dir, sessionId, 'subagents');
-        let subs = [];
-        try { subs = fs.readdirSync(subDir); } catch { /* no subagents */ }
-        for (const s of subs) {
-          const m = /^agent-(.+)\.jsonl$/.exec(s);
-          if (m) out.push({ file: path.join(subDir, s), sessionId, agentId: m[1], kind: 'subagent', meta: path.join(subDir, `agent-${m[1]}.meta.json`) });
-        }
+    for (const provider of this.providers) {
+      try {
+        const list = provider.discover(this.projectDir, { onlySession });
+        out.push(...list);
+      } catch {
+        // Continue discovering other providers
       }
     }
     // Main transcripts first, so parents know their spawn calls before children link to them.
@@ -166,15 +142,18 @@ class Monitor {
   ensureAgent(entry) {
     let a = this.agents.get(entry.agentId);
     if (!a) {
-      a = newAgent(entry.agentId, entry.kind, entry.sessionId);
+      const provider = entry.provider || 'claude-code';
+      const provObj = this.providerMap.get(provider);
+      const providerName = provObj ? provObj.displayName : provider;
+      a = newAgent(entry.agentId, entry.kind, entry.sessionId, provider, providerName);
       this.agents.set(a.id, a);
     }
     a.transcript = entry.file;
     if (entry.meta) {
       try {
         const meta = JSON.parse(fs.readFileSync(entry.meta, 'utf8'));
-        a.agentType = meta.agentType || a.agentType;
-        a.description = meta.description || a.description;
+        a.agentType = meta.agentType || (meta.subagentDescriptor && meta.subagentDescriptor.typeName) || a.agentType;
+        a.description = meta.description || (meta.subagentDescriptor && meta.subagentDescriptor.role) || a.description;
         a.spawnToolUseId = meta.toolUseId || null;
       } catch { /* meta is optional */ }
     }
@@ -195,33 +174,54 @@ class Monitor {
     const lines = text.split('\n');
     fstate.partial = lines.pop(); // keep an incomplete last line for the next read
     let changed = false;
+    const provider = this.providerMap.get(fstate.provider) || this.defaultProvider;
+
     for (const raw of lines) {
       if (!raw.trim()) continue;
-      let line;
-      try { line = JSON.parse(raw); } catch { continue; }
-      changed = this.ingest(line, fstate) || changed;
+      let parsed = raw;
+      if (!fstate.isMarkdown) {
+        try { parsed = JSON.parse(raw); } catch { continue; }
+      }
+      const events = provider && provider.parseLine ? provider.parseLine(parsed, fstate) : parsed;
+      if (!events) continue;
+      if (Array.isArray(events)) {
+        for (const ev of events) {
+          if (ev) changed = this.ingest(ev, fstate) || changed;
+        }
+      } else {
+        changed = this.ingest(events, fstate) || changed;
+      }
     }
     return changed;
   }
 
-  /** Apply one transcript line to the model. */
+  /** Apply one normalized transcript event to the model. */
   ingest(line, fstate) {
     let agentId = fstate.agentId;
-    // Older Claude Code versions keep subagent ("sidechain") lines inside the main transcript.
+    // Subagent ("sidechain") lines inside the main transcript
     if (fstate.kind === 'main' && line.isSidechain && line.agentId) {
       agentId = line.agentId;
-      if (!this.agents.has(agentId)) this.ensureAgent({ agentId, kind: 'subagent', sessionId: fstate.sessionId });
+      if (!this.agents.has(agentId)) {
+        this.ensureAgent({ agentId, kind: 'subagent', sessionId: fstate.sessionId, provider: fstate.provider });
+      }
     }
     const a = this.agents.get(agentId);
     if (!a) return false;
     const ts = line.timestamp ? Date.parse(line.timestamp) : null;
 
     switch (line.type) {
-      case 'custom-title': if (a.kind === 'main' && line.customTitle) a.name = line.customTitle; return true;
-      case 'agent-name': if (a.kind === 'main' && line.agentName && !a.name) a.name = line.agentName; return true;
-      case 'user': return this.onUser(a, line, ts);
-      case 'assistant': return this.onAssistant(a, line, ts);
-      default: return false;
+      case 'custom-title':
+        if (line.customTitle) a.name = line.customTitle;
+        return true;
+      case 'agent-name':
+        if (line.agentName && !a.name) a.name = line.agentName;
+        return true;
+      case 'user':
+        return this.onUser(a, line, ts);
+      case 'assistant':
+        return this.onAssistant(a, line, ts);
+      default:
+        return false;
     }
   }
 
@@ -260,7 +260,6 @@ class Monitor {
         if (r.is_error) {
           const tool = call ? call.name : 'tool';
           const message = clip(rtext, 400);
-          // A rejected permission is not a failure of the agent's work, but it is still an issue worth listing.
           t.errors.push({ ts, tool, message });
           a.recent.push({ ts, text: `${tool} failed: ${clip(rtext, 80)}`, tool, error: true });
         }
@@ -273,12 +272,11 @@ class Monitor {
           const tur = line.toolUseResult || {};
           const isAsync = tur.isAsync || tur.status === 'async_launched' || /Async agent launched/i.test(rtext);
           if (!isAsync) spawn.result = { isError: !!r.is_error, text: rtext, ts };
-          const m = /agentId:\s*([a-z0-9]+)/i.exec(rtext);
+          const m = /agentId:\s*([a-z0-9-]+)/i.exec(rtext) || /"conversationId":\s*"([^"]+)"/i.exec(rtext);
           const childId = tur.agentId || (m && m[1]);
           if (childId && !spawn.childId) { spawn.childId = childId; this.childSpawn.set(childId, spawn); }
         }
-        if (call && call.name === 'TaskCreate') {
-          // TaskCreate returns the new id ("Task #3 created ..."). Map our local id to it.
+        if (call && (call.name === 'TaskCreate' || call.name === 'manage_task')) {
           const m = /#?(\d+)/.exec(rtext);
           const task = a.tasks.find((x) => x.callId === r.tool_use_id);
           if (m && task) task.id = m[1];
@@ -291,18 +289,20 @@ class Monitor {
     const text = textOf(content);
     if (line.isMeta || line.isCompactSummary || !text.trim()) return false;
     const last = a.turns[a.turns.length - 1];
-    if (/^\[Request interrupted by user/.test(text)) {
+    if (/^\[Request interrupted by user/i.test(text)) {
       if (last && last.status === 'in_progress') {
         last.errors.push({ ts, tool: 'user', message: 'Interrupted by user' });
         this.closeTurn(a, last, 'failed', ts);
       }
       return true;
     }
-    if (last && last.status === 'in_progress') this.closeTurn(a, last, last.errors.length && !last.finalText ? 'failed' : 'completed', ts);
+    if (last && last.status === 'in_progress') {
+      this.closeTurn(a, last, last.errors.length && !last.finalText ? 'failed' : 'completed', ts);
+    }
     let prompt = text;
     let source = 'user';
-    if (/^<task-notification>/.test(text)) { source = 'notification'; prompt = 'Background task notification'; }
-    const cmd = /<command-name>([^<]+)<\/command-name>/.exec(text);
+    if (/^<task-notification>/i.test(text)) { source = 'notification'; prompt = 'Background task notification'; }
+    const cmd = /<command-name>([^<]+)<\/command-name>/i.exec(text);
     if (cmd) { source = 'command'; prompt = cmd[1].trim(); }
     a.turns.push(newTurn(a.turns.length + 1, clip(prompt, 2000), ts, source));
     if (a.kind === 'subagent' && !a.prompt) a.prompt = clip(text, 2000);
@@ -314,7 +314,7 @@ class Monitor {
     this.touch(a, ts);
     if (msg.model && msg.model !== '<synthetic>') a.model = msg.model;
     const t = this.currentTurn(a, ts);
-    if (t.status !== 'in_progress') { t.status = 'in_progress'; t.endedAt = null; } // continued after a stop hook
+    if (t.status !== 'in_progress') { t.status = 'in_progress'; t.endedAt = null; }
     if (msg.usage) {
       a.tokens.input += (msg.usage.input_tokens || 0) + (msg.usage.cache_creation_input_tokens || 0) + (msg.usage.cache_read_input_tokens || 0);
       a.tokens.output += msg.usage.output_tokens || 0;
@@ -341,29 +341,30 @@ class Monitor {
     a.recent.push({ ts, text: describeTool(c.name, input, (p) => this.rel(p)), tool: c.name });
 
     const kind = FILE_TOOLS[c.name];
-    const fp = input.file_path || input.notebook_path;
+    const fp = input.file_path || input.notebook_path || input.path || input.Path || input.filePath;
     if (kind && fp) {
       const f = t.files[fp] || (t.files[fp] = { read: 0, edit: 0, write: 0, lastTs: ts });
       f[kind]++;
       f.lastTs = ts;
     }
     if (/handback/i.test(c.name)) {
-      // Newer subagents report back through a SubagentHandback call instead of a final text message.
       t.finalText = input.message || input.summary || input.result || t.finalText;
       a.handback = c.id;
     }
     if (SPAWN_TOOLS.has(c.name)) {
+      const desc = input.description || input.Role || input.TypeName || input.prompt || '';
+      const stype = input.subagent_type || input.TypeName || 'general-purpose';
       this.spawns.set(c.id, {
         parentId: a.id, sessionId: a.sessionId, ts,
-        description: input.description || '', subagentType: input.subagent_type || 'general-purpose',
-        prompt: input.prompt || '', result: null, childId: null,
+        description: desc, subagentType: stype,
+        prompt: input.prompt || input.Prompt || '', result: null, childId: null,
       });
       t.subagents.push(c.id);
     }
     this.applyTaskTool(a, c);
   }
 
-  /** Track task lists from TodoWrite, TaskCreate/TaskUpdate and the desktop app's update_plan. */
+  /** Track task lists from TodoWrite, TaskCreate/Update, update_plan, etc. */
   applyTaskTool(a, c) {
     const input = c.input || {};
     if (c.name === 'TodoWrite' && Array.isArray(input.todos)) {
@@ -377,6 +378,13 @@ class Monitor {
         if (input.status) task.status = normStatus(input.status);
         if (input.subject) task.title = input.subject;
       }
+    } else if (c.name === 'update_plan' && Array.isArray(input.plan || input.items || input.steps)) {
+      const list = input.plan || input.items || input.steps;
+      a.tasks = list.map((x, i) => ({
+        id: String(x.id || i + 1),
+        title: typeof x === 'string' ? x : (x.step || x.content || x.title || ''),
+        status: normStatus(x.status),
+      }));
     } else if (c.name === 'mcp__ccd_turn__update_plan') {
       if (Array.isArray(input.items)) {
         a.tasks = input.items.map((x, i) => ({ id: String(i + 1), title: x.content || '', status: normStatus(x.status) }));
@@ -481,10 +489,9 @@ class Monitor {
   flushArtifacts() {
     this.artifacts.begin();
     for (const a of this.agents.values()) {
-      this.statusOf(a); // may close a subagent turn
+      this.statusOf(a);
       for (const t of a.turns) {
         if (t.status === 'in_progress') continue;
-        // Skip turns that did not change since the last write (child status can still change).
         const sig = `${t.endedAt}:${t.status}:${t.subagents.map((id) => (this.spawns.get(id).result ? 1 : 0)).join('')}`;
         if (t.artifactSig === sig) continue;
         this.artifacts.write(this.buildArtifact(a, t));
@@ -505,6 +512,7 @@ class Monitor {
     return {
       id: `${a.id.slice(0, 12)}-t${t.index}`,
       agentId: a.id, agentName: this.nameOf(a), agentType: a.agentType, kind: a.kind,
+      provider: a.provider, providerName: a.providerName,
       sessionId: a.sessionId, parentId: this.parentOf(a), turn: t.index,
       status: t.status, prompt: t.prompt, source: t.source,
       startedAt: t.startedAt, endedAt: t.endedAt,
@@ -556,6 +564,7 @@ class Monitor {
     const spawn = a.kind === 'subagent' ? this.spawnFor(a) : null;
     return {
       id: a.id, kind: a.kind, sessionId: a.sessionId, parentId: this.parentOf(a),
+      provider: a.provider, providerName: a.providerName,
       name: this.nameOf(a), agentType: a.agentType || (spawn && spawn.subagentType),
       status, activity,
       prompt: last ? last.prompt : '',
@@ -576,13 +585,16 @@ class Monitor {
     };
   }
 
-  /** Spawn calls without a transcript of their own (older versions, or a child not yet written). */
+  /** Spawn calls without a transcript of their own. */
   virtualAgents(views) {
     const linked = new Set();
     for (const a of this.agents.values()) { const s = this.spawnFor(a); if (s) linked.add(s); }
     const out = [];
     for (const [id, s] of this.spawns) {
       if (linked.has(s) || !views.some((v) => v.id === s.parentId)) continue;
+      const parentAgent = this.agents.get(s.parentId);
+      const prov = parentAgent ? parentAgent.provider : 'claude-code';
+      const provName = parentAgent ? parentAgent.providerName : 'Claude Code';
       const age = this.now() - s.ts;
       const status = s.result ? (s.result.isError ? 'failed' : 'completed')
         : age > SESSION_END_MS ? 'completed' : age > STALE_TOOL_MS ? 'idle' : 'running';
@@ -590,6 +602,7 @@ class Monitor {
         : age > SESSION_END_MS ? 'Ended (no transcript or result found)' : status === 'idle' ? 'No transcript yet' : 'Working (no transcript yet)';
       out.push({
         id: `spawn-${id.slice(-10)}`, kind: 'subagent', sessionId: s.sessionId, parentId: s.parentId,
+        provider: prov, providerName: provName,
         name: s.description || 'Subagent', agentType: s.subagentType, status, activity,
         prompt: clip(s.prompt, 2000), startedAt: s.ts, lastActivity: s.result ? s.result.ts : s.ts,
         endedAt: s.result ? s.result.ts : null, model: null, tokens: { input: 0, output: 0 },
@@ -627,18 +640,22 @@ class Monitor {
       }
     }
     const activity = [];
-    for (const a of agents) for (const r of a.recent) activity.push({ ...r, agentId: a.id, agentName: a.name });
+    for (const a of agents) for (const r of a.recent) activity.push({ ...r, agentId: a.id, agentName: a.name, provider: a.provider });
     activity.sort((x, y) => (y.ts || 0) - (x.ts || 0));
 
     const artifacts = this.artifacts.list();
+    const activeProviders = [...new Set(agents.map((a) => a.provider))];
+
     return {
       project: { dir: this.projectDir, name: path.basename(this.projectDir) },
+      providers: this.providers.map((p) => ({ id: p.name, name: p.displayName })),
       generatedAt: this.now(),
       version: this.version,
       summary: {
         total: agents.length,
         main: agents.filter((a) => a.kind === 'main').length,
         subagents: agents.filter((a) => a.kind === 'subagent').length,
+        providers: activeProviders.length,
         running: count('running'), idle: count('idle'), completed: count('completed'), failed: count('failed'),
         tasks: {
           pending: tasks.filter((t) => t.status === 'pending').length,
@@ -659,4 +676,13 @@ class Monitor {
   }
 }
 
-module.exports = { Monitor, describeTool, STALE_TOOL_MS, STALE_THINK_MS, SESSION_END_MS };
+module.exports = {
+  Monitor,
+  describeTool,
+  STALE_TOOL_MS,
+  STALE_THINK_MS,
+  SESSION_END_MS,
+  CANONICAL_TOOLS,
+  FILE_TOOLS,
+  SPAWN_TOOLS,
+};
