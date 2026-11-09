@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Manager</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --panel-2: #f1f3f6; --border: #e3e6eb; --text: #1b1f24; --muted: #667080;
+  --accent: #5b5bd6; --accent-soft: #ececfb;
+  --run: #1f8f5f; --run-soft: #e2f5ec; --idle: #b7791f; --idle-soft: #fbf1df;
+  --done: #3a6fd8; --done-soft: #e5edfc; --fail: #d1453b; --fail-soft: #fbe6e4; --pend: #8a93a3; --pend-soft: #eef0f3;
+  --shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.06);
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1115; --panel: #171a21; --panel-2: #1e222b; --border: #2a2f3a; --text: #e6e8ec; --muted: #8d95a5;
+    --accent: #8b8bf5; --accent-soft: #25264a;
+    --run: #3ccf8e; --run-soft: #12301f; --idle: #e6a644; --idle-soft: #33270f;
+    --done: #6f9cff; --done-soft: #17264a; --fail: #ff6b60; --fail-soft: #3a1714; --pend: #8d95a5; --pend-soft: #23272f;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1115; --panel: #171a21; --panel-2: #1e222b; --border: #2a2f3a; --text: #e6e8ec; --muted: #8d95a5;
+  --accent: #8b8bf5; --accent-soft: #25264a;
+  --run: #3ccf8e; --run-soft: #12301f; --idle: #e6a644; --idle-soft: #33270f;
+  --done: #6f9cff; --done-soft: #17264a; --fail: #ff6b60; --fail-soft: #3a1714; --pend: #8d95a5; --pend-soft: #23272f;
+  --shadow: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button { font: inherit; color: inherit; }
+.wrap { max-width: 1320px; margin: 0 auto; padding: 0 20px 48px; }
+header { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+.bar { display: flex; align-items: center; gap: 14px; max-width: 1320px; margin: 0 auto; padding: 12px 20px; }
+.logo { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; color: #fff; font-weight: 700; flex: none; }
+.title { font-weight: 650; font-size: 16px; }
+.sub { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46vw; }
+.spacer { flex: 1; }
+.live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.live i { width: 8px; height: 8px; border-radius: 50%; background: var(--pend); }
+.live.on i { background: var(--run); box-shadow: 0 0 0 0 var(--run); animation: pulse 2s infinite; }
+.iconbtn { border: 1px solid var(--border); background: var(--panel); border-radius: 8px; padding: 5px 9px; cursor: pointer; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run) 60%, transparent); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 20px 0; }
+.kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow); }
+.kpi .k { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.kpi .v { font-size: 26px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.kpi .s { color: var(--muted); font-size: 12px; }
+.kpi.run .v { color: var(--run); } .kpi.idle .v { color: var(--idle); } .kpi.done .v { color: var(--done); } .kpi.fail .v { color: var(--fail); }
+.meter { height: 6px; border-radius: 6px; background: var(--panel-2); overflow: hidden; margin-top: 8px; }
+.meter > b { display: block; height: 100%; background: var(--accent); border-radius: 6px; transition: width .4s; }
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; overflow-x: auto; }
+.tab { border: 0; background: none; padding: 10px 14px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; }
+.tab.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.tab .n { background: var(--panel-2); border-radius: 10px; padding: 0 7px; font-size: 11px; margin-left: 4px; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.chip { border: 1px solid var(--border); background: var(--panel); border-radius: 20px; padding: 4px 12px; cursor: pointer; font-size: 13px; }
+.chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+input[type=search] { border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 8px; padding: 6px 10px; min-width: 220px; font: inherit; }
+label.tog { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; cursor: pointer; }
+
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 20px; font-size: 12px; font-weight: 600; text-transform: capitalize; white-space: nowrap; }
+.pill i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.running { color: var(--run); background: var(--run-soft); } .pill.running i { animation: pulse 1.6s infinite; }
+.pill.idle { color: var(--idle); background: var(--idle-soft); }
+.pill.completed { color: var(--done); background: var(--done-soft); }
+.pill.failed { color: var(--fail); background: var(--fail-soft); }
+.pill.pending, .pill.in_progress { color: var(--pend); background: var(--pend-soft); }
+.pill.in_progress { color: var(--run); background: var(--run-soft); }
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 6px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; }
+
+.session { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; margin-bottom: 14px; box-shadow: var(--shadow); overflow: hidden; }
+.agent { display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; padding: 14px 16px; cursor: pointer; }
+.agent:hover { background: var(--panel-2); }
+.agent .top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.agent .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent .act { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; grid-column: 1; }
+.agent .meta { display: flex; gap: 14px; color: var(--muted); font-size: 12px; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
+.agent .prog { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.agent .prog .meter { flex: 1; margin: 0; max-width: 360px; }
+.files { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.file { font-family: var(--mono); font-size: 11.5px; padding: 1px 7px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); }
+.file.mod { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.children { border-top: 1px solid var(--border); background: color-mix(in srgb, var(--panel-2) 45%, var(--panel)); }
+.children .agent { padding-left: 40px; position: relative; border-top: 1px dashed var(--border); }
+.children .agent:first-child { border-top: 0; }
+.children .agent::before { content: ""; position: absolute; left: 22px; top: 0; bottom: 50%; border-left: 2px solid var(--border); border-bottom: 2px solid var(--border); width: 10px; border-bottom-left-radius: 6px; }
+.empty { text-align: center; color: var(--muted); padding: 50px 20px; border: 1px dashed var(--border); border-radius: 14px; background: var(--panel); }
+.empty b { color: var(--text); display: block; font-size: 15px; margin-bottom: 4px; }
+.empty code { font-family: var(--mono); background: var(--panel-2); padding: 1px 6px; border-radius: 5px; }
+
+.board { display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: 12px; overflow-x: auto; }
+.col { background: var(--panel-2); border-radius: 12px; padding: 10px; min-height: 120px; }
+.col h3 { margin: 2px 4px 10px; font-size: 13px; display: flex; justify-content: space-between; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; box-shadow: var(--shadow); }
+.card .t { font-weight: 550; }
+.card .o { color: var(--muted); font-size: 12px; margin-top: 4px; display: flex; gap: 6px; align-items: center; }
+
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--panel-2); }
+tr:last-child td { border-bottom: 0; }
+tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel-2); }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+.tablewrap { overflow-x: auto; }
+
+.feed { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
+.ev { display: grid; grid-template-columns: 80px 200px 1fr; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.ev:last-child { border-bottom: 0; }
+.ev .when { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ev .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+.ev.err .what { color: var(--fail); }
+
+.drawer { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: none; z-index: 20; }
+.drawer.open { display: block; }
+.drawer .panel { position: absolute; right: 0; top: 0; bottom: 0; width: min(720px, 100%); background: var(--panel); border-left: 1px solid var(--border); overflow-y: auto; padding: 20px 24px 40px; }
+.drawer h2 { margin: 0 0 6px; font-size: 18px; }
+.drawer h4 { margin: 22px 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.close { position: sticky; top: 0; float: right; }
+.kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; font-size: 13px; }
+.kv div:nth-child(odd) { color: var(--muted); }
+.prompt { background: var(--panel-2); border-radius: 10px; padding: 10px 12px; white-space: pre-wrap; font-size: 13px; max-height: 220px; overflow: auto; }
+.check { list-style: none; padding: 0; margin: 0; }
+.check li { padding: 5px 0; display: flex; gap: 8px; align-items: baseline; }
+.check li .box { width: 16px; text-align: center; flex: none; }
+.check li.completed { color: var(--muted); text-decoration: line-through; }
+.check li.in_progress { font-weight: 600; }
+.md { font-size: 14px; }
+.md h1 { font-size: 20px; } .md h2 { font-size: 15px; margin-top: 22px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.md code { font-family: var(--mono); background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+.md blockquote { margin: 0; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--panel-2); border-radius: 0 8px 8px 0; white-space: pre-wrap; }
+.md table { font-size: 13px; }
+.md pre { background: var(--panel-2); padding: 10px; border-radius: 8px; overflow: auto; }
+a { color: var(--accent); }
+.btn { display: inline-block; border: 1px solid var(--border); background: var(--panel-2); border-radius: 8px; padding: 5px 12px; text-decoration: none; color: var(--text); font-size: 13px; cursor: pointer; }
+.err-list .e { border-left: 3px solid var(--fail); background: var(--fail-soft); padding: 6px 10px; border-radius: 0 8px 8px 0; margin-bottom: 6px; font-size: 13px; }
+
+@media (max-width: 760px) {
+  .wrap, .bar { padding-left: 16px; padding-right: 16px; }
+  .sub { display: none; }
+  .agent { grid-template-columns: 1fr; }
+  .agent .meta { justify-content: flex-start; }
+  .board { grid-template-columns: repeat(4, 80vw); }
+  .ev { grid-template-columns: 64px 1fr; } .ev .what { grid-column: 1 / -1; }
+  input[type=search] { min-width: 0; flex: 1; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="logo">AI</div>
+    <div style="min-width:0">
+      <div class="title">AI Manager <span id="proj" style="color:var(--muted);font-weight:500"></span></div>
+      <div class="sub" id="projdir"></div>
+    </div>
+    <div class="spacer"></div>
+    <span class="live" id="live"><i></i><span id="livetxt">Connecting…</span></span>
+    <button class="iconbtn" id="theme" title="Change theme">◐</button>
+  </div>
+</header>
+<div class="wrap">
+  <section class="kpis" id="kpis"></section>
+  <nav class="tabs" id="tabs"></nav>
+  <main id="view"></main>
+</div>
+<div class="drawer" id="drawer"><div class="panel" id="panel"></div></div>
+
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const token = new URLSearchParams(location.search).get('token');
+const q = (p) => (token ? `${p}${p.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}` : p);
+
+let S = null;
+const ui = { tab: 'agents', filter: 'all', search: '', showEnded: false, drawer: null };
+try { Object.assign(ui, JSON.parse(localStorage.getItem('aim-ui') || '{}'), { drawer: null }); } catch {}
+const save = () => { try { localStorage.setItem('aim-ui', JSON.stringify({ tab: ui.tab, filter: ui.filter, showEnded: ui.showEnded })); } catch {} };
+
+// ------------------------------------------------------------ theme
+(function () {
+  let t = null; try { t = localStorage.getItem('aim-theme'); } catch {}
+  if (t) document.documentElement.dataset.theme = t;
+  $('#theme').onclick = () => {
+    const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+    const cur = document.documentElement.dataset.theme || (dark ? 'dark' : 'light');
+    const next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('aim-theme', next); } catch {}
+  };
+})();
+
+// ------------------------------------------------------------ format helpers
+function ago(ts) {
+  if (!ts) return '-';
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 5) return 'just now';
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+function dur(ms) {
+  if (ms == null || ms < 0) return '-';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+const num = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n || 0));
+const clock = (ts) => (ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
+const when = (ts) => (ts ? new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-');
+const pill = (s) => `<span class="pill ${esc(s)}"><i></i>${esc(String(s).replace('_', ' '))}</span>`;
+const isEnded = (a) => a.status === 'completed' || a.status === 'failed';
+const agentById = (id) => S && S.agents.find((a) => a.id === id);
+
+// ------------------------------------------------------------ KPIs
+function renderKpis() {
+  const m = S.summary;
+  const tt = m.tasks.pending + m.tasks.in_progress + m.tasks.completed + m.tasks.failed;
+  const pct = tt ? Math.round((m.tasks.completed / tt) * 100) : 0;
+  $('#kpis').innerHTML = `
+    <div class="kpi"><div class="k">Agents</div><div class="v">${m.total}</div><div class="s">${m.main} sessions · ${m.subagents} subagents</div></div>
+    <div class="kpi run"><div class="k">Running</div><div class="v">${m.running}</div><div class="s">working now</div></div>
+    <div class="kpi idle"><div class="k">Idle</div><div class="v">${m.idle}</div><div class="s">waiting or stalled</div></div>
+    <div class="kpi done"><div class="k">Completed</div><div class="v">${m.completed}</div><div class="s">finished</div></div>
+    <div class="kpi fail"><div class="k">Failed</div><div class="v">${m.failed}</div><div class="s">stopped with errors</div></div>
+    <div class="kpi"><div class="k">Tasks</div><div class="v">${m.tasks.completed}<span style="font-size:15px;color:var(--muted)"> / ${tt}</span></div><div class="meter"><b style="width:${pct}%"></b></div></div>
+    <div class="kpi"><div class="k">Files changed</div><div class="v">${m.modifiedFiles}</div><div class="s">${m.files} touched</div></div>
+    <div class="kpi"><div class="k">Artifacts</div><div class="v">${m.artifacts}</div><div class="s">work reports</div></div>`;
+}
+
+// ------------------------------------------------------------ tabs
+const TABS = [['agents', 'Agents'], ['tasks', 'Tasks'], ['files', 'Files'], ['activity', 'Activity'], ['artifacts', 'Artifacts']];
+function renderTabs() {
+  const n = { agents: S.summary.total, tasks: S.tasks.length, files: S.files.length, activity: S.activity.length, artifacts: S.summary.artifacts };
+  $('#tabs').innerHTML = TABS.map(([k, l]) => `<button class="tab ${ui.tab === k ? 'on' : ''}" data-tab="${k}">${l}<span class="n">${n[k]}</span></button>`).join('');
+}
+$('#tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-tab]'); if (!b) return;
+  ui.tab = b.dataset.tab; save(); render();
+});
+
+// ------------------------------------------------------------ agents
+function agentRow(a) {
+  const mod = a.files.filter((f) => f.edit || f.write);
+  const shown = (mod.length ? mod : a.files).slice(0, 6);
+  const elapsed = (a.endedAt || Date.now()) - (a.startedAt || Date.now());
+  const p = a.progress;
+  const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+  return `<div class="agent" data-agent="${esc(a.id)}">
+    <div class="top">${pill(a.status)}<span class="name" title="${esc(a.name)}">${esc(a.name)}</span><span class="badge">${esc(a.kind === 'main' ? 'session' : a.agentType)}</span></div>
+    <div class="meta"><span title="Duration">⏱ ${dur(elapsed)}</span><span title="Tool calls">⚙ ${a.toolCalls}</span><span title="Files touched">📄 ${a.files.length}</span>${a.errors.length ? `<span style="color:var(--fail)" title="Issues">⚠ ${a.errors.length}</span>` : ''}<span title="Last activity">${ago(a.lastActivity)}</span></div>
+    <div class="act">${a.status === 'running' ? '▸ ' : ''}${esc(a.activity)}</div>
+    ${p.total ? `<div class="prog"><span>Tasks ${p.done}/${p.total}</span><div class="meter"><b style="width:${pct}%"></b></div><span>${pct}%</span></div>` : ''}
+    ${shown.length ? `<div class="files">${shown.map((f) => `<span class="file ${f.edit || f.write ? 'mod' : ''}" title="${esc(f.path)} — read ${f.read}, edit ${f.edit}, write ${f.write}">${f.edit || f.write ? '✎ ' : ''}${esc(f.path.split('/').slice(-2).join('/'))}</span>`).join('')}${(mod.length || a.files.length) > 6 ? `<span class="file">+${(mod.length || a.files.length) - 6}</span>` : ''}</div>` : ''}
+  </div>`;
+}
+
+function matches(a) {
+  if (ui.filter !== 'all' && a.status !== ui.filter) return false;
+  if (ui.search) {
+    const s = ui.search.toLowerCase();
+    if (!(a.name + ' ' + a.activity + ' ' + a.agentType + ' ' + a.files.map((f) => f.path).join(' ')).toLowerCase().includes(s)) return false;
+  }
+  return true;
+}
+
+function renderAgents() {
+  const counts = { all: S.agents.length, running: 0, idle: 0, completed: 0, failed: 0 };
+  S.agents.forEach((a) => counts[a.status]++);
+  const tb = `<div class="toolbar">
+    ${['all', 'running', 'idle', 'completed', 'failed'].map((f) => `<button class="chip ${ui.filter === f ? 'on' : ''}" data-filter="${f}">${f[0].toUpperCase() + f.slice(1)} ${counts[f]}</button>`).join('')}
+    <input type="search" id="search" placeholder="Search agents, files…" value="${esc(ui.search)}">
+    <label class="tog"><input type="checkbox" id="ended" ${ui.showEnded ? 'checked' : ''}> Show ended sessions</label>
+  </div>`;
+  const ids = new Set(S.agents.map((a) => a.id));
+  const kids = {};
+  S.agents.forEach((a) => { if (a.parentId && ids.has(a.parentId)) (kids[a.parentId] = kids[a.parentId] || []).push(a); });
+  const roots = S.agents.filter((a) => !a.parentId || !ids.has(a.parentId));
+  const tree = (a) => [a].concat((kids[a.id] || []).flatMap(tree));
+  let groups = roots.map((r) => ({ root: r, all: tree(r) }));
+  const filtering = ui.filter !== 'all' || ui.search;
+  if (!ui.showEnded && !filtering) groups = groups.filter((g) => g.all.some((a) => !isEnded(a)));
+  const order = { running: 0, idle: 1, failed: 2, completed: 3 };
+  const best = (g) => Math.min(...g.all.map((a) => order[a.status]));
+  groups.sort((x, y) => best(x) - best(y) || (y.root.lastActivity || 0) - (x.root.lastActivity || 0));
+
+  let html = '';
+  for (const g of groups) {
+    const list = g.all.filter(matches);
+    if (!list.length) continue;
+    const rootShown = list.includes(g.root);
+    const children = list.filter((a) => a !== g.root);
+    html += `<div class="session">${rootShown ? agentRow(g.root) : `<div class="agent" data-agent="${esc(g.root.id)}"><div class="top"><span class="name" style="color:var(--muted)">${esc(g.root.name)}</span></div></div>`}
+      ${children.length ? `<div class="children">${children.map(agentRow).join('')}</div>` : ''}</div>`;
+  }
+  if (!html) {
+    const hidden = roots.length - groups.length;
+    html = S.agents.length
+      ? `<div class="empty"><b>No active agents match</b>${hidden > 0 && !ui.showEnded ? `${hidden} ended session(s) are hidden. Turn on “Show ended sessions” to see them.` : 'Change the filter to see more.'}</div>`
+      : `<div class="empty"><b>No agents found yet</b>Start Claude Code in <code>${esc(S.project.dir)}</code>. Agents show here in real time.</div>`;
+  }
+  $('#view').innerHTML = tb + html;
+  $('#search').addEventListener('input', (e) => { ui.search = e.target.value; const pos = e.target.selectionStart; renderAgents(); const s = $('#search'); s.focus(); s.setSelectionRange(pos, pos); });
+  $('#ended').addEventListener('change', (e) => { ui.showEnded = e.target.checked; save(); renderAgents(); });
+}
+
+// ------------------------------------------------------------ tasks
+function renderTasks() {
+  const cols = [['pending', 'Pending'], ['in_progress', 'In progress'], ['completed', 'Completed'], ['failed', 'Failed']];
+  const owner = (t) => agentById(t.agentId);
+  // By default, show tasks of agents that are active or that ended in the last 6 hours.
+  const recent = (a) => !a || !isEnded(a) || (a.endedAt && Date.now() - a.endedAt < 6 * 3600e3);
+  const live = S.tasks.filter((t) => ui.showEnded || recent(owner(t)) || (t.ownerId && recent(agentById(t.ownerId))));
+  const html = `<div class="toolbar"><label class="tog"><input type="checkbox" id="ended" ${ui.showEnded ? 'checked' : ''}> Include tasks of older sessions</label></div>
+  <div class="board">${cols.map(([k, l]) => {
+    const items = live.filter((t) => t.status === k);
+    return `<div class="col"><h3><span>${pill(k)}</span><span style="color:var(--muted)">${items.length}</span></h3>
+      ${items.slice(0, 200).map((t) => { const o = owner(t); return `<div class="card" ${t.ownerId ? `data-agent="${esc(t.ownerId)}" style="cursor:pointer"` : o ? `data-agent="${esc(o.id)}" style="cursor:pointer"` : ''}>
+        <div class="t">${esc(t.title)}</div>
+        <div class="o">${t.source === 'delegation' ? '<span class="badge">subagent</span>' : '<span class="badge">todo</span>'}<span>${esc(o ? o.name : 'unknown agent')}</span></div></div>`; }).join('') || '<div style="color:var(--muted);font-size:13px;padding:6px">Nothing here</div>'}
+    </div>`;
+  }).join('')}</div>`;
+  $('#view').innerHTML = html;
+  $('#ended').addEventListener('change', (e) => { ui.showEnded = e.target.checked; save(); renderTasks(); });
+}
+
+// ------------------------------------------------------------ files
+function renderFiles() {
+  if (!S.files.length) { $('#view').innerHTML = '<div class="empty"><b>No files touched yet</b>Files that agents read, edit or write show here.</div>'; return; }
+  $('#view').innerHTML = `<div class="tablewrap"><table><thead><tr><th>File</th><th>Agents</th><th class="num">Reads</th><th class="num">Edits</th><th class="num">Writes</th><th>Last touched</th></tr></thead><tbody>
+    ${S.files.slice(0, 400).map((f) => `<tr><td class="mono">${f.edit || f.write ? '✎ ' : ''}${esc(f.path)}</td>
+      <td>${f.agents.map((a) => `<span class="badge" data-agent="${esc(a.id)}" style="cursor:pointer;margin:1px">${esc(a.name.slice(0, 40))}</span>`).join(' ')}</td>
+      <td class="num">${f.read}</td><td class="num">${f.edit}</td><td class="num">${f.write}</td><td>${ago(f.lastTs)}</td></tr>`).join('')}
+  </tbody></table></div>`;
+}
+
+// ------------------------------------------------------------ activity
+function renderActivity() {
+  if (!S.activity.length) { $('#view').innerHTML = '<div class="empty"><b>No activity yet</b></div>'; return; }
+  $('#view').innerHTML = `<div class="feed">${S.activity.map((e) => `<div class="ev ${e.error ? 'err' : ''}">
+    <span class="when" title="${esc(new Date(e.ts).toLocaleString())}">${clock(e.ts)}</span>
+    <span class="who" data-agent="${esc(e.agentId)}" style="cursor:pointer" title="${esc(e.agentName)}">${esc(e.agentName)}</span>
+    <span class="what">${esc(e.text)}</span></div>`).join('')}</div>`;
+}
+
+// ------------------------------------------------------------ artifacts
+function renderArtifacts() {
+  if (!S.artifacts.length) { $('#view').innerHTML = '<div class="empty"><b>No artifacts yet</b>When an agent finishes a task, a work report shows here.</div>'; return; }
+  $('#view').innerHTML = `<div class="tablewrap"><table><thead><tr><th>Status</th><th>Agent</th><th>Task</th><th class="num">Files changed</th><th class="num">Tasks done</th><th class="num">Issues</th><th>Duration</th><th>Finished</th></tr></thead><tbody>
+    ${S.artifacts.map((a) => `<tr class="click" data-artifact="${esc(a.id)}"><td>${pill(a.status)}</td>
+      <td><div style="font-weight:550">${esc(a.agentName)}</div><div style="color:var(--muted);font-size:12px">${esc(a.kind === 'main' ? 'session · turn ' + a.turn : a.agentType)}</div></td>
+      <td style="max-width:380px">${esc(a.prompt.slice(0, 140))}</td>
+      <td class="num">${a.filesModified}</td><td class="num">${a.tasksCompleted}</td><td class="num" style="${a.issues ? 'color:var(--fail)' : ''}">${a.issues}</td>
+      <td>${dur(a.durationMs)}</td><td>${when(a.endedAt)}</td></tr>`).join('')}
+  </tbody></table></div>`;
+}
+
+// ------------------------------------------------------------ drawer: agent detail
+function openAgent(id) {
+  ui.drawer = { type: 'agent', id };
+  renderDrawer();
+}
+function renderDrawer() {
+  if (!ui.drawer) { $('#drawer').classList.remove('open'); return; }
+  if (ui.drawer.type !== 'agent') return;
+  const a = agentById(ui.drawer.id);
+  if (!a) { ui.drawer = null; $('#drawer').classList.remove('open'); return; }
+  const scroll = $('#panel').scrollTop;
+  const parent = a.parentId && agentById(a.parentId);
+  const kids = S.agents.filter((x) => x.parentId === a.id);
+  const arts = S.artifacts.filter((x) => x.agentId === a.id);
+  $('#panel').innerHTML = `<button class="iconbtn close" data-close>✕</button>
+    <h2>${esc(a.name)}</h2>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px">${pill(a.status)}<span class="badge">${esc(a.kind === 'main' ? 'main session' : a.agentType)}</span><span style="color:var(--muted);font-size:13px">${esc(a.activity)}</span></div>
+    <div class="kv">
+      <div>Agent ID</div><div class="mono">${esc(a.id)}</div>
+      ${parent ? `<div>Parent</div><div><a href="#" data-agent="${esc(parent.id)}">${esc(parent.name)}</a></div>` : ''}
+      <div>Started</div><div>${when(a.startedAt)}</div>
+      <div>Last activity</div><div>${ago(a.lastActivity)}</div>
+      <div>Duration</div><div>${dur((a.endedAt || Date.now()) - a.startedAt)}</div>
+      <div>Model</div><div>${esc(a.model || '-')}</div>
+      <div>Tokens</div><div>${num(a.tokens.input)} in · ${num(a.tokens.output)} out</div>
+      <div>Turns</div><div>${a.completedTurns} finished of ${a.turns}</div>
+    </div>
+    <h4>Current task</h4><div class="prompt">${esc(a.prompt || '-')}</div>
+    ${a.summary ? `<h4>Latest result</h4><div class="prompt">${esc(a.summary)}</div>` : ''}
+    <h4>Tasks ${a.progress.total ? `(${a.progress.done}/${a.progress.total})` : ''}</h4>
+    ${a.tasks.length ? `<ul class="check">${a.tasks.map((t) => `<li class="${esc(t.status)}"><span class="box">${t.status === 'completed' ? '✔' : t.status === 'in_progress' ? '▶' : t.status === 'failed' ? '✖' : '○'}</span>${esc(t.title)}</li>`).join('')}</ul>` : '<div style="color:var(--muted)">This agent has no task list.</div>'}
+    ${kids.length ? `<h4>Subagents (${kids.length})</h4>${kids.map((k) => `<div style="display:flex;gap:8px;align-items:center;padding:4px 0">${pill(k.status)}<a href="#" data-agent="${esc(k.id)}">${esc(k.name)}</a><span class="badge">${esc(k.agentType)}</span></div>`).join('')}` : ''}
+    <h4>Files (${a.files.length})</h4>
+    ${a.files.length ? `<div class="tablewrap"><table><thead><tr><th>File</th><th class="num">R</th><th class="num">E</th><th class="num">W</th></tr></thead><tbody>${a.files.map((f) => `<tr><td class="mono">${esc(f.path)}</td><td class="num">${f.read}</td><td class="num">${f.edit}</td><td class="num">${f.write}</td></tr>`).join('')}</tbody></table></div>` : '<div style="color:var(--muted)">No files yet.</div>'}
+    <h4>Tool usage</h4>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">${Object.entries(a.tools).sort((x, y) => y[1] - x[1]).map(([k, v]) => `<span class="badge">${esc(k.replace(/^mcp__.+?__/, ''))} · ${v}</span>`).join('') || '<span style="color:var(--muted)">None</span>'}</div>
+    ${a.errors.length ? `<h4>Issues (${a.errors.length})</h4><div class="err-list">${a.errors.map((e) => `<div class="e"><b>${esc(e.tool)}</b> · ${clock(e.ts)}<br>${esc(e.message)}</div>`).join('')}</div>` : ''}
+    <h4>Recent activity</h4>
+    <div class="feed">${a.recent.slice().reverse().map((e) => `<div class="ev ${e.error ? 'err' : ''}" style="grid-template-columns:80px 1fr"><span class="when">${clock(e.ts)}</span><span class="what">${esc(e.text)}</span></div>`).join('') || '<div class="ev">None</div>'}</div>
+    ${arts.length ? `<h4>Artifacts (${arts.length})</h4>${arts.slice(0, 30).map((x) => `<div style="padding:4px 0;display:flex;gap:8px;align-items:center">${pill(x.status)}<a href="#" data-artifact="${esc(x.id)}">Turn ${x.turn}: ${esc(x.prompt.slice(0, 80))}</a></div>`).join('')}` : ''}`;
+  $('#drawer').classList.add('open');
+  $('#panel').scrollTop = scroll;
+}
+
+// ------------------------------------------------------------ drawer: artifact
+function mdToHtml(md) {
+  const inline = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|\W)_([^_]+)_(?=\W|$)/g, '$1<i>$2</i>');
+  const lines = md.split('\n');
+  let out = '', i = 0;
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^```/.test(l)) { let b = ''; i++; while (i < lines.length && !/^```/.test(lines[i])) b += lines[i++] + '\n'; i++; out += `<pre>${esc(b)}</pre>`; continue; }
+    if (/^#{1,6} /.test(l)) { const n = l.match(/^#+/)[0].length; out += `<h${n}>${inline(l.slice(n + 1))}</h${n}>`; i++; continue; }
+    if (/^\|/.test(l)) {
+      const rows = []; while (i < lines.length && /^\|/.test(lines[i])) rows.push(lines[i++]);
+      const cells = (r) => r.replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+      out += `<table><thead><tr>${cells(rows[0]).map((c) => `<th>${inline(c)}</th>`).join('')}</tr></thead><tbody>${rows.slice(2).map((r) => `<tr>${cells(r).map((c) => `<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+      continue;
+    }
+    if (/^> ?/.test(l)) { let b = []; while (i < lines.length && /^> ?/.test(lines[i])) b.push(lines[i++].replace(/^> ?/, '')); out += `<blockquote>${esc(b.join('\n'))}</blockquote>`; continue; }
+    if (/^\s*[-*] /.test(l)) { let b = ''; while (i < lines.length && /^\s*[-*] /.test(lines[i])) b += `<li>${inline(lines[i++].replace(/^\s*[-*] /, ''))}</li>`; out += `<ul>${b}</ul>`; continue; }
+    if (/^\s*\d+\. /.test(l)) { let b = ''; while (i < lines.length && /^\s*\d+\. /.test(lines[i])) b += `<li>${inline(lines[i++].replace(/^\s*\d+\. /, ''))}</li>`; out += `<ol>${b}</ol>`; continue; }
+    if (!l.trim()) { i++; continue; }
+    let p = []; while (i < lines.length && lines[i].trim() && !/^(#|\||>|```|\s*[-*] |\s*\d+\. )/.test(lines[i])) p.push(lines[i++]);
+    if (!p.length) { p.push(lines[i++]); }
+    out += `<p>${p.map(inline).join('<br>')}</p>`;
+  }
+  return out;
+}
+async function openArtifact(id) {
+  ui.drawer = { type: 'artifact', id };
+  $('#panel').innerHTML = '<div style="color:var(--muted)">Loading…</div>';
+  $('#drawer').classList.add('open');
+  const r = await fetch(q(`/api/artifacts/${encodeURIComponent(id)}`));
+  if (!r.ok) { $('#panel').innerHTML = `<button class="iconbtn close" data-close>✕</button><p>Artifact not found.</p>`; return; }
+  const a = await r.json();
+  $('#panel').innerHTML = `<button class="iconbtn close" data-close>✕</button>
+    <div style="display:flex;gap:8px;margin-bottom:8px"><a class="btn" href="${q(`/api/artifacts/${encodeURIComponent(id)}.md`)}">Download .md</a>
+    ${agentById(a.agentId) ? `<a class="btn" href="#" data-agent="${esc(a.agentId)}">Open agent</a>` : ''}</div>
+    <div class="md">${mdToHtml(a.markdown)}</div>`;
+}
+
+// ------------------------------------------------------------ events
+document.addEventListener('click', (e) => {
+  const c = e.target.closest('[data-close]');
+  if (c || e.target.id === 'drawer') { ui.drawer = null; $('#drawer').classList.remove('open'); return; }
+  const f = e.target.closest('[data-filter]');
+  if (f) { ui.filter = f.dataset.filter; save(); renderAgents(); return; }
+  const ag = e.target.closest('[data-agent]');
+  if (ag) { e.preventDefault(); openAgent(ag.dataset.agent); return; }
+  const ar = e.target.closest('[data-artifact]');
+  if (ar) { e.preventDefault(); openArtifact(ar.dataset.artifact); }
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { ui.drawer = null; $('#drawer').classList.remove('open'); } });
+
+function render() {
+  if (!S) return;
+  $('#proj').textContent = '· ' + S.project.name;
+  $('#projdir').textContent = S.project.dir;
+  document.title = `${S.summary.running ? `(${S.summary.running}) ` : ''}AI Manager · ${S.project.name}`;
+  renderKpis();
+  renderTabs();
+  // Do not redraw the agents view while the user types in its search box.
+  const typing = document.activeElement && document.activeElement.id === 'search';
+  if (!typing) ({ agents: renderAgents, tasks: renderTasks, files: renderFiles, activity: renderActivity, artifacts: renderArtifacts })[ui.tab]();
+  if (ui.drawer && ui.drawer.type === 'agent') renderDrawer();
+}
+
+// ------------------------------------------------------------ live connection
+function connect() {
+  const es = new EventSource(q('/api/stream'));
+  es.onmessage = (ev) => {
+    S = JSON.parse(ev.data);
+    $('#live').classList.add('on');
+    $('#livetxt').textContent = 'Live · ' + clock(S.generatedAt);
+    render();
+  };
+  es.onerror = () => { $('#live').classList.remove('on'); $('#livetxt').textContent = 'Reconnecting…'; };
+}
+connect();
+setInterval(() => { if (S && ui.tab !== 'agents') return; if (S && document.activeElement.id !== 'search') renderAgents(); }, 15000);
+</script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "name": "claude-ai-manager",
+  "version": "1.0.0",
+  "description": "CLI and live web dashboard to monitor Claude Code agents and subagents in a project: status, tasks, files and work artifacts.",
+  "license": "MIT",
+  "bin": {
+    "aim": "bin/aim.js",
+    "ai-manager": "bin/aim.js"
+  },
+  "main": "src/monitor.js",
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "demo": "node bin/aim.js demo",
+    "dashboard": "node bin/aim.js dashboard"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agents",
+    "monitoring",
+    "dashboard",
+    "cli"
+  ]
+}
